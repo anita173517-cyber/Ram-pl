@@ -1,0 +1,91 @@
+name: RAM PLAYER v19.0 AMOLED 3D - Build & Verify APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ram-player-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate or extract Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' -print | sort -V | tail -n 1)"
+          if [[ -n "${ZIP_FILE}" ]]; then
+            echo "Found source archive: ${ZIP_FILE}"
+            EXTRACT_DIR="${RUNNER_TEMP}/ram-player-source"
+            rm -rf "${EXTRACT_DIR}"
+            mkdir -p "${EXTRACT_DIR}"
+            unzip -q -o "${ZIP_FILE}" -d "${EXTRACT_DIR}"
+
+            SETTINGS_FILE="$(find "${EXTRACT_DIR}" -type f -name settings.gradle.kts -print -quit)"
+            if [[ -z "${SETTINGS_FILE}" ]]; then
+              echo "::error::ZIP does not contain settings.gradle.kts."
+              exit 1
+            fi
+            PROJECT_DIR="$(dirname "${SETTINGS_FILE}")"
+            test -f "${PROJECT_DIR}/app/build.gradle.kts"
+            cp -a "${PROJECT_DIR}/." "${GITHUB_WORKSPACE}/"
+            test -f settings.gradle.kts
+            test -f app/build.gradle.kts
+            echo "Extracted ${ZIP_FILE} into workspace root."
+            exit 0
+          fi
+
+          if [[ -f "settings.gradle.kts" && -f "app/build.gradle.kts" ]]; then
+            echo "Android project found directly at repository root."
+            exit 0
+          fi
+
+          EXISTING_SETTINGS="$(find . -maxdepth 3 -type f -name settings.gradle.kts -print -quit)"
+          if [[ -n "${EXISTING_SETTINGS}" ]]; then
+            PROJECT_DIR="$(dirname "${EXISTING_SETTINGS}")"
+            echo "Found extracted project inside subfolder: ${PROJECT_DIR}"
+            cp -a "${PROJECT_DIR}/." "${GITHUB_WORKSPACE}/"
+            test -f settings.gradle.kts
+            test -f app/build.gradle.kts
+            exit 0
+          fi
+
+          echo "::error::No source project or ZIP found. Upload RAM_PLAYER_v19.0_100_PASS.zip to the repository."
+          exit 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configure Android SDK and install SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="${SDK_ROOT}"
+          export ANDROID_SDK_ROOT="${SDK_ROOT}"
+          echo "ANDROID_HOME=${SDK_ROOT}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "${GITHUB_ENV}"
+          echo "sdk.dir=${SDK_ROOT}" > local.properties
+
+          SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "${SDKMANAGER}" ]]; then
+            SDKMANAGER="$(find "${SDK_ROOT}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          fi
+          echo "Using preinstalled sdkmanager: ${SDKMANAGER}"
+          yes | "${SDKMANAGER}" --sdk_root="${SDK_ROOT}" --licenses >/dev/null || true
+          "${SDKMANAGER}" --sdk_
+          
