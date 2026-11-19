@@ -43,26 +43,26 @@ jobs:
             test -f settings.gradle.kts
             test -f app/build.gradle.kts
             echo "Extracted ${ZIP_FILE} into workspace root."
-            exit 0
-          fi
-
-          if [[ -f "settings.gradle.kts" && -f "app/build.gradle.kts" ]]; then
+          elif [[ -f "settings.gradle.kts" && -f "app/build.gradle.kts" ]]; then
             echo "Android project found directly at repository root."
-            exit 0
+          else
+            EXISTING_SETTINGS="$(find . -maxdepth 3 -type f -name settings.gradle.kts -print -quit)"
+            if [[ -n "${EXISTING_SETTINGS}" ]]; then
+              PROJECT_DIR="$(dirname "${EXISTING_SETTINGS}")"
+              cp -a "${PROJECT_DIR}/." "${GITHUB_WORKSPACE}/"
+              test -f settings.gradle.kts
+              test -f app/build.gradle.kts
+            else
+              echo "::error::No source project or ZIP found."
+              exit 1
+            fi
           fi
 
-          EXISTING_SETTINGS="$(find . -maxdepth 3 -type f -name settings.gradle.kts -print -quit)"
-          if [[ -n "${EXISTING_SETTINGS}" ]]; then
-            PROJECT_DIR="$(dirname "${EXISTING_SETTINGS}")"
-            echo "Found extracted project inside subfolder: ${PROJECT_DIR}"
-            cp -a "${PROJECT_DIR}/." "${GITHUB_WORKSPACE}/"
-            test -f settings.gradle.kts
-            test -f app/build.gradle.kts
-            exit 0
+          # Ensure real org.json JVM library is available for host unit tests
+          if ! grep -q 'org.json:json' app/build.gradle.kts; then
+            sed -i 's|testImplementation("junit:junit:4.13.2")|testImplementation("junit:junit:4.13.2")\n    testImplementation("org.json:json:20240303")|' app/build.gradle.kts
+            echo "Added org.json:json:20240303 for JVM unit tests."
           fi
-
-          echo "::error::No source project or ZIP found. Upload RAM_PLAYER_v19.0_100_PASS.zip to the repository."
-          exit 1
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
