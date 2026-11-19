@@ -87,5 +87,83 @@ jobs:
           fi
           echo "Using preinstalled sdkmanager: ${SDKMANAGER}"
           yes | "${SDKMANAGER}" --sdk_root="${SDK_ROOT}" --licenses >/dev/null || true
-          "${SDKMANAGER}" --sdk_
+          "${SDKMANAGER}" --sdk_root="${SDK_ROOT}" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Configure optional persistent APK signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${KEYSTORE_BASE64}" && -n "${KEYSTORE_PASSWORD}" && -n "${KEY_ALIAS}" && -n "${KEY_PASSWORD}" ]]; then
+            KEYSTORE_PATH="${RUNNER_TEMP}/ram-player-release.jks"
+            printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+            test -s "${KEYSTORE_PATH}"
+            {
+              echo "SIGNING_STORE_FILE=${KEYSTORE_PATH}"
+              echo "SIGNING_STORE_PASSWORD=${KEYSTORE_PASSWORD}"
+              echo "SIGNING_KEY_ALIAS=${KEY_ALIAS}"
+              echo "SIGNING_KEY_PASSWORD=${KEY_PASSWORD}"
+            } >> "${GITHUB_ENV}"
+            echo "Persistent release signing key configured."
+          else
+            echo "::notice::No persistent signing secrets configured; Gradle will use its installable debug signing key."
+          fi
+
+      - name: Verify project resources & run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "scripts/verify_project.py" ]]; then
+            python3 scripts/verify_project.py
+          fi
+          gradle --no-daemon --no-configuration-cache testDebugUnitTest --console=plain
+
+      - name: Build Debug & R8-Shrunk Signed Release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-configuration-cache assembleDebug assembleRelease --console=plain
+
+          RELEASE_APK="$(find app/build/outputs/apk/release -maxdepth 2 -type f -name '*.apk' ! -name '*-unsigned.apk' -print -quit)"
+          if [[ -z "${RELEASE_APK}" ]]; then
+            RELEASE_APK="app/build/outputs/apk/release/app-release.apk"
+          fi
+          DEBUG_APK="$(find app/build/outputs/apk/debug -maxdepth 2 -type f -name '*.apk' -print -quit)"
+
+          test -s "${RELEASE_APK}"
+          unzip -t "${RELEASE_APK}" >/dev/null
+
+          mkdir -p single_release_out
+          cp "${RELEASE_APK}" single_release_out/RAM-PLAYER-v19.0-AMOLED-3D-512MB.apk
+          if [[ -n "${DEBUG_APK}" && -s "${DEBUG_APK}" ]]; then
+            unzip -t "${DEBUG_APK}" >/dev/null
+            cp "${DEBUG_APK}" single_release_out/RAM-PLAYER-v19.0-Debug.apk
+          fi
+          sha256sum single_release_out/*.apk
+          ls -lh single_release_out/
+
+      - name: Upload Release APK (Recommended for 512MB RAM Android TV)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAM-PLAYER-v19.0-AMOLED-3D-Release
+          path: single_release_out/RAM-PLAYER-v19.0-AMOLED-3D-512MB.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAM-PLAYER-v19.0-Debug-APK
+          path: single_release_out/RAM-PLAYER-v19.0-Debug.apk
+          if-no-files-found: warn
+          retention-days: 14
           
